@@ -182,22 +182,32 @@ Health check.
 
 ## Developer Integration Guide
 
-### Backend Integration (PostgreSQL)
+### ⚠️ Recommended: Filter BEFORE calling the webhook
 
-When a livestream ends with duration > 5 minutes:
+The Zoop backend should **check `success_stream_count` before calling the webhook** — this avoids sending unnecessary requests to the feedback service.
 
 ```javascript
 const axios = require('axios');
 
-async function onStreamEnded(sellerId, liveId) {
-  // 1. Query seller_store_table
+const FEEDBACK_SERVICE_URL = 'https://your-feedback-server.com';
+
+async function onStreamEnded(sellerId, liveId, streamDurationMinutes) {
+  // 1. Only proceed if stream was > 5 minutes
+  if (streamDurationMinutes < 5) return;
+
+  // 2. Query seller_store_table
   const seller = await db.query(
     'SELECT seller_id, seller_name, phone, success_stream_count FROM seller_store_table WHERE seller_id = $1',
     [sellerId]
   );
 
-  // 2. POST to feedback service
-  await axios.post('https://your-feedback-server.com/webhook/livestream-ended', {
+  // 3. ✅ Check BEFORE calling webhook — skip if past limit
+  if (seller.success_stream_count < 1 || seller.success_stream_count > 5) {
+    return; // No webhook call needed — saves an HTTP request
+  }
+
+  // 4. Only call webhook for streams 1-5
+  await axios.post(`${FEEDBACK_SERVICE_URL}/webhook/livestream-ended`, {
     seller_id: seller.seller_id,
     seller_name: seller.seller_name,
     phone: seller.phone,              // E.164 format: +919876543210
@@ -207,9 +217,11 @@ async function onStreamEnded(sellerId, liveId) {
 }
 ```
 
+> **Note:** The feedback service also has the same check as a safety net, but filtering at the source is recommended to reduce traffic.
+
 ### Firebase Firestore Structure
 
-Collection: `feedback_calls`
+Collection: `feedback_calls`  
 Document ID: Bolna call ID
 
 ```
@@ -236,6 +248,93 @@ feedback_calls/
 
 ---
 
+## Local Testing
+
+### Step 1: Configure `.env`
+
+```env
+BOLNA_API_KEY=your_real_bolna_api_key
+BOLNA_AGENT_ID=your_real_agent_id
+PORT=3000
+FEEDBACK_CALL_LIMIT=5
+CALL_DELAY_MINUTES=0    # ← Set to 0 for instant testing (no 5-min wait)
+```
+
+### Step 2: Start the server
+
+```bash
+npm run dev
+```
+
+### Step 3: Test — trigger a feedback call
+
+Replace `+91XXXXXXXXXX` with your real phone number:
+
+**PowerShell:**
+```powershell
+Invoke-RestMethod -Uri http://localhost:3000/webhook/livestream-ended `
+  -Method Post `
+  -ContentType 'application/json' `
+  -Body '{"seller_id": "test_seller_1", "seller_name": "Test Seller", "phone": "+91XXXXXXXXXX", "live_id": "test_live_1", "success_stream_count": 1}'
+```
+
+**curl:**
+```bash
+curl -X POST http://localhost:3000/webhook/livestream-ended \
+  -H "Content-Type: application/json" \
+  -d '{"seller_id": "test_seller_1", "seller_name": "Test Seller", "phone": "+91XXXXXXXXXX", "live_id": "test_live_1", "success_stream_count": 1}'
+```
+
+**Expected:** Your phone rings with the Bolna AI feedback agent.
+
+### Step 4: Test — verify the 5-call limit
+
+Send 5 requests, changing `live_id` and `success_stream_count` each time:
+
+```powershell
+# Call 2
+Invoke-RestMethod -Uri http://localhost:3000/webhook/livestream-ended -Method Post -ContentType 'application/json' -Body '{"seller_id": "test_seller_1", "phone": "+91XXXXXXXXXX", "live_id": "test_live_2", "success_stream_count": 2}'
+
+# Call 3
+Invoke-RestMethod -Uri http://localhost:3000/webhook/livestream-ended -Method Post -ContentType 'application/json' -Body '{"seller_id": "test_seller_1", "phone": "+91XXXXXXXXXX", "live_id": "test_live_3", "success_stream_count": 3}'
+
+# ... continue up to 5
+
+# Call 6 — should be SKIPPED
+Invoke-RestMethod -Uri http://localhost:3000/webhook/livestream-ended -Method Post -ContentType 'application/json' -Body '{"seller_id": "test_seller_1", "phone": "+91XXXXXXXXXX", "live_id": "test_live_6", "success_stream_count": 6}'
+# Expected: {"success": true, "action": "skipped", "message": "...past the 5-stream feedback window."}
+```
+
+### Step 5: Check results
+
+```powershell
+# View seller history
+Invoke-RestMethod -Uri http://localhost:3000/seller/test_seller_1/history | ConvertTo-Json -Depth 5
+
+# View queue stats
+Invoke-RestMethod -Uri http://localhost:3000/queue/stats | ConvertTo-Json
+
+# View CSV file directly
+Get-Content data/calls.csv
+```
+
+### Step 6: Test the Bolna callback
+
+Simulate a Bolna call completion (to test result storage):
+
+```powershell
+Invoke-RestMethod -Uri http://localhost:3000/webhook/bolna-call-complete `
+  -Method Post `
+  -ContentType 'application/json' `
+  -Body '{"call_id": "your_bolna_call_id_here", "status": "completed", "transcript": "The stream went great. I had no issues. I rate it 4 out of 5."}'
+```
+
+Check `data/calls.csv` — the matching row should now have status=`completed`, rating=`4`.
+
+> **Tip:** For real Bolna callbacks, you'll need to expose your localhost via [ngrok](https://ngrok.com). Run `ngrok http 3000` and set the ngrok URL as your Bolna webhook.
+
+---
+
 ## Bolna AI Agent Configuration
 
 **Prompt:**
@@ -251,3 +350,4 @@ feedback_calls/
 > "Hi! This is Zoop. You just finished a great live session! We'd love your quick feedback — it'll only take a minute."
 
 **Webhook URL:** `https://your-server.com/webhook/bolna-call-complete`
+
