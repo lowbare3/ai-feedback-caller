@@ -5,33 +5,36 @@ Automatically triggers **AI voice calls** (via [Bolna AI](https://bolna.ai)) to 
 ## How It Works
 
 ```
-Seller ends livestream (duration > 5 min)
+Seller ends livestream
     │
     ▼
-Zoop backend queries seller_store_table
-for success_stream_count and seller phone
+Zoop backend checks:
+  • Was stream duration > 5 min?
+  • Is success_stream_count between 1 and 5?
     │
-    ▼
-POST /webhook/livestream-ended
-{seller_id, phone, live_id, success_stream_count}
+    ├── NO to either → Stop (no webhook call)
     │
-    ▼
-Is success_stream_count between 1 and 5?
-    ├── NO  → Skip (no call)
-    └── YES → Add to call queue
-                │
-                ▼
-           Wait 5 minutes
-                │
-                ▼
-        Bolna AI calls the seller
-        (How was the stream? Any issues? Rate 1-5)
-                │
-                ▼
-        Results saved to:
-          • Firebase Firestore (NoSQL)
-          • Google Sheets (team visibility)
-          • Local JSON + CSV (backup)
+    └── YES to both
+          │
+          ▼
+    POST /webhook/livestream-ended
+    {seller_id, phone, live_id, success_stream_count}
+          │
+          ▼
+    Added to call queue
+          │
+          ▼
+    Wait 5 minutes
+          │
+          ▼
+    Bolna AI calls the seller
+    (How was the stream? Any issues? Rate 1-5)
+          │
+          ▼
+    Results saved to:
+      • Firebase Firestore (NoSQL)
+      • Google Sheets (team visibility)
+      • Local JSON + CSV (backup)
 ```
 
 ## Project Structure
