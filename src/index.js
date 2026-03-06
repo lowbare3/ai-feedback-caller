@@ -140,12 +140,12 @@ app.get('/queue/stats', (req, res) => {
 // ─────────────────────────────────────────────
 // Start server
 // ─────────────────────────────────────────────
-function start() {
+async function start() {
     try {
-        storage.ensureHeaders();
-        console.log('[Storage] Local storage ready (data/calls.json + data/calls.csv)');
+        await storage.ensureHeaders();
+        console.log('[Storage] All storage backends initialized');
     } catch (error) {
-        console.error('[Storage] Failed to initialize:', error.message);
+        console.error('[Storage] Initialization error:', error.message);
     }
 
     app.listen(PORT, () => {

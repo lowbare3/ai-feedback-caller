@@ -1,5 +1,7 @@
 node_modules/
 .env
 service-account-key.json
+firebase-service-account.json
+google-service-account.json
 data/
 *.log
